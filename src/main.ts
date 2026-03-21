@@ -1,6 +1,6 @@
 import "./style.css";
 import * as THREE from "three/webgpu";
-import { uniform } from "three/tsl";
+import { uniform, vec2, vec3 } from "three/tsl";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { CreateBlackHole } from "./blackhole/blackhole";
 
@@ -11,7 +11,7 @@ interface SceneState {
   scene: THREE.Scene;
   camera: THREE.PerspectiveCamera;
   controls: OrbitControls;
-  torus: THREE.Mesh;
+  sphere: THREE.Mesh;
   clock: THREE.Clock;
 }
 
@@ -26,6 +26,14 @@ const CAMERA_POSITION = new THREE.Vector3(0, 5, CAMERA_Z);
 const SPHERE_RADIUS = 100;
 const SPHERE_WIDTH_SEG = 32;
 const SPHERE_HEIGHT_SEG = 32;
+
+const Uniforms = {
+  camera_position: uniform(
+    vec3(CAMERA_POSITION.x, CAMERA_POSITION.y, CAMERA_POSITION.z),
+  ),
+  camera_target: uniform(vec3(0, 0, 0)),
+  resolution: uniform(vec2(window.innerWidth, window.innerHeight)),
+};
 
 // ─── Renderer ─────────────────────────────────────────────────────────────────
 
@@ -88,22 +96,28 @@ function createControls(
   canvas: HTMLCanvasElement,
 ): OrbitControls {
   const controls = new OrbitControls(camera, canvas);
-  controls.enableDamping = true;
-  controls.dampingFactor = 0.05;
-  controls.minDistance = 2;
-  controls.maxDistance = 20;
-  controls.autoRotate = false; // flip to true if you want free spin
+  // controls.enableDamping = true;
+  // controls.dampingFactor = 0.05;
+  // controls.minDistance = 2;
+  // controls.maxDistance = 20;
   return controls;
 }
 
 // ─── Torus (placeholder for the black hole accretion disk) ────────────────────
 
-function createSphere(scene: THREE.Scene): THREE.Mesh {
+function createSphere(
+  scene: THREE.Scene,
+  Uniforms: {
+    camera_position: THREE.UniformNode<"vec3", THREE.Vector3>;
+    camera_target: THREE.UniformNode<"vec3", THREE.Vector3>;
+    resolution: THREE.UniformNode<"vec2", THREE.Vector2>;
+  },
+): THREE.Mesh {
   const blackhole = CreateBlackHole({
     SPHERE_HEIGHT_SEG,
     SPHERE_RADIUS,
     SPHERE_WIDTH_SEG,
-    CAMERA_POSITION
+    Uniforms,
   });
   scene.add(blackhole);
 
@@ -127,13 +141,20 @@ function onResize(state: SceneState): void {
 // ─── Animate ──────────────────────────────────────────────────────────────────
 
 function animate(state: SceneState): void {
-  const { renderer, scene, camera, controls, torus, clock } = state;
+  const { renderer, scene, camera, controls, sphere, clock } = state;
 
   const elapsed = clock.getElapsedTime();
 
-  // Slow spin — replace with TSL-driven distortion later
-  torus.rotation.z = elapsed * 0.3;
-
+  Uniforms.camera_position.value.set(
+    camera.position.x,
+    camera.position.y,
+    camera.position.z,
+  );
+  Uniforms.camera_target.value.set(
+    controls.target.x,
+    controls.target.y,
+    controls.target.z,
+  );
   controls.update();
   renderer.render(scene, camera);
 
@@ -150,10 +171,17 @@ async function init(): Promise<void> {
     camera,
     renderer.domElement as HTMLCanvasElement,
   );
-  const torus = createSphere(scene);
+  const sphere = createSphere(scene, Uniforms);
   const clock = new THREE.Clock();
 
-  const state: SceneState = { renderer, scene, camera, controls, torus, clock };
+  const state: SceneState = {
+    renderer,
+    scene,
+    camera,
+    controls,
+    sphere,
+    clock,
+  };
 
   window.addEventListener("resize", () => onResize(state));
 
