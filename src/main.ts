@@ -21,7 +21,7 @@ const CAMERA_FOV = 60;
 const CAMERA_NEAR = 0.1;
 const CAMERA_FAR = 1000;
 const CAMERA_Z = 20;
-const CAMERA_POSITION = new THREE.Vector3(0, 5, CAMERA_Z);
+const CAMERA_POSITION = new THREE.Vector3(0, -5, CAMERA_Z);
 
 const SPHERE_RADIUS = 100;
 const SPHERE_WIDTH_SEG = 32;
