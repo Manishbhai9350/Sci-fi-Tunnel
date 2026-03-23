@@ -77,15 +77,18 @@ function createScene(): THREE.Scene {
 // ─── Camera ───────────────────────────────────────────────────────────────────
 
 function createCamera(): THREE.PerspectiveCamera {
-  const aspect = window.innerWidth / window.innerHeight;
+  const aspect = innerWidth / innerHeight;
+
   const camera = new THREE.PerspectiveCamera(
     CAMERA_FOV,
     aspect,
     CAMERA_NEAR,
     CAMERA_FAR,
-  );
+  )
+
   camera.position.copy(CAMERA_POSITION);
-  camera.lookAt(0, 0, 0);
+  camera.lookAt(new THREE.Vector3(0,0,0))
+
   return camera;
 }
 
