@@ -1,5 +1,5 @@
-import { dot, Fn, fract, sin, vec2, vec3, float, floor, mix } from "three/tsl";
-import type { ConstNode, Vector2, Vector3 } from "three/webgpu";
+import { dot, Fn, fract, sin, vec2, vec3 } from "three/tsl";
+import type { ConstNode, Vector2 } from "three/webgpu";
 
 export const hash21 = Fn(([p]: [ConstNode<"vec2", Vector2>]) => {
   const n = sin(dot(p, vec2(127.1, 311.7))).mul(43758.5453);

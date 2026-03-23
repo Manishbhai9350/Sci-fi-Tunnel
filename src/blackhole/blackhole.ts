@@ -26,7 +26,6 @@ import {
   vec4,
 } from "three/tsl";
 import * as THREE from "three/webgpu";
-import type { Node } from "three/webgpu";
 import { createNebulaField, createStarField } from "./background";
 import { fbm } from "../utils/noises";
 
@@ -243,10 +242,10 @@ const accretionDisk = Fn(
     diskColor.mulAssign(clamp(dopplerBoost, float(0.1), float(5.0)));
 
     // Keplerian rotation: inner regions rotate faster
-    const keplerianPhase = time
-      .mul(uniforms.diskRotationSpeed)
-      .div(pow(hitR, float(1.5)));
-    const rotatedAngle = hitAngle.add(keplerianPhase);
+    // const keplerianPhase = time
+    //   .mul(uniforms.diskRotationSpeed)
+    //   .div(pow(hitR, float(1.5)));
+    // const rotatedAngle = hitAngle.add(keplerianPhase);
 
     // Anisotropic sampling: radial creates rings, azimuthal creates arcs
     // const noiseCoord = vec3(

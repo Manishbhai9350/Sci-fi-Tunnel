@@ -20,7 +20,7 @@ interface SceneState {
 const CAMERA_FOV = 60;
 const CAMERA_NEAR = 0.1;
 const CAMERA_FAR = 1000;
-const CAMERA_Z = 27;
+const CAMERA_Z = innerWidth <= 900 ? 27 : 24;
 const CAMERA_POSITION = new THREE.Vector3(0, -8, CAMERA_Z);
 
 const SPHERE_RADIUS = 100;
@@ -144,9 +144,8 @@ function onResize(state: SceneState): void {
 // ─── Animate ──────────────────────────────────────────────────────────────────
 
 function animate(state: SceneState): void {
-  const { renderer, scene, camera, controls, sphere, clock } = state;
+  const { renderer, scene, camera, controls } = state;
 
-  const elapsed = clock.getElapsedTime();
 
   Uniforms.camera_position.value.set(
     camera.position.x,

@@ -1,6 +1,6 @@
-import { dot, Fn, fract, sin, vec2, vec3, float, floor, mix } from "three/tsl";
-import type { ConstNode, FlowData, Vector2, Vector3 } from "three/webgpu";
-import { hash21, hash22, hash31 } from "./hash";
+import { Fn, fract, vec3, float, floor, mix } from "three/tsl";
+import type { ConstNode, FlowData, Vector3 } from "three/webgpu";
+import { hash31 } from "./hash";
 
 export const noise3D = Fn(([p]: [ConstNode<"vec3", Vector3>]) => {
   const i = floor(p);

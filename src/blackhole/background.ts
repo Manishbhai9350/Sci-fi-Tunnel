@@ -17,10 +17,7 @@ import { hash21, hash22 } from "../utils/hash";
 import type {
   Color,
   ConstNode,
-  FlowData,
-  Uniform,
   UniformNode,
-  Vector2,
   Vector3,
 } from "three/webgpu";
 import { fbm } from "../utils/noises";
