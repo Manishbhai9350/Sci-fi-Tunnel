@@ -41,6 +41,48 @@ interface BlackHoleProps {
   };
 }
 
+interface UniformsType {
+  starSize: THREE.UniformNode<"float", number>;
+  starDensity: THREE.UniformNode<"float", number>;
+  starBrightness: THREE.UniformNode<"float", number>;
+
+  starBackgroundColor: THREE.UniformNode<"vec3", THREE.Vector3>;
+  nebula2Color: THREE.UniformNode<"color", THREE.Color>;
+  nebula1Color: THREE.UniformNode<"color", THREE.Color>;
+
+  nebula1Scale: THREE.UniformNode<"float", number>;
+  nebula1Density: THREE.UniformNode<"float", number>;
+  nebula1Brightness: THREE.UniformNode<"float", number>;
+
+  nebula2Scale: THREE.UniformNode<"float", number>;
+  nebula2Density: THREE.UniformNode<"float", number>;
+  nebula2Brightness: THREE.UniformNode<"float", number>;
+
+  blackHoleMass: THREE.UniformNode<"float", number>;
+  stepSize: THREE.UniformNode<"float", number>;
+  gravitationalLensing: THREE.UniformNode<"float", number>;
+
+  diskTemperature: THREE.UniformNode<"float", number>;
+  temperatureFalloff: THREE.UniformNode<"float", number>;
+  diskInnerRadius: THREE.UniformNode<"float", number>;
+  diskOuterRadius: THREE.UniformNode<"float", number>;
+
+  dopplerStrength: THREE.UniformNode<"float", number>;
+  diskRotationSpeed: THREE.UniformNode<"float", number>;
+  turbulenceScale: THREE.UniformNode<"float", number>;
+  turbulenceStretch: THREE.UniformNode<"float", number>;
+  turbulenceLacunarity: THREE.UniformNode<"float", number>;
+  turbulencePersistence: THREE.UniformNode<"float", number>;
+  turbulenceSharpness: THREE.UniformNode<"float", number>;
+  turbulenceCycleTime: THREE.UniformNode<"float", number>;
+
+  diskEdgeSoftnessInner: THREE.UniformNode<"float", number>;
+  diskEdgeSoftnessOuter: THREE.UniformNode<"float", number>;
+  camera_position: THREE.UniformNode<"vec3", THREE.Vector3>;
+  camera_target: THREE.UniformNode<"vec3", THREE.Vector3>;
+  resolution: THREE.UniformNode<"vec2", THREE.Vector2>;
+}
+
 // ─── Blackbody Color ──────────────────────────────────────────────────────────
 
 const blackbodyColor = Fn(([tempK]: [THREE.ConstNode<"float", number>]) => {
@@ -148,6 +190,122 @@ const blackbodyColor = Fn(([tempK]: [THREE.ConstNode<"float", number>]) => {
   return vec3(r, g, b);
 });
 
+const accretionDisk = Fn(
+  ([hitR, hitAngle, time, rayDir, innerR, outerR, uniforms]: [
+    THREE.ConstNode<"float", number>,
+    THREE.ConstNode<"float", number>,
+    THREE.ConstNode<"float", number>,
+    THREE.ConstNode<"vec3", THREE.Vector3>,
+    THREE.ConstNode<"float", number>,
+    THREE.ConstNode<"float", number>,
+    UniformsType,
+  ]) => {
+    // ── Edge softening ──────────────────────────────────────────────
+    const normR = clamp(
+      hitR.sub(innerR).div(outerR.sub(innerR)),
+      float(0.0),
+      float(1.0),
+    );
+    const edgeFalloff = smoothstep(
+      float(0.0),
+      uniforms.diskEdgeSoftnessInner,
+      normR,
+    ).mul(
+      smoothstep(
+        float(1.0),
+        float(1.0).sub(uniforms.diskEdgeSoftnessOuter),
+        normR,
+      ),
+    );
+
+    // ── Blackbody temperature ───────────────────────────────────────
+    const peakTempK = uniforms.diskTemperature.mul(1000.0);
+    const tempK = peakTempK.mul(
+      pow(innerR.div(hitR), uniforms.temperatureFalloff),
+    );
+    const diskColor = blackbodyColor(tempK).toVar("diskColor"); // ← toVar so we can mutate
+
+    // ── Doppler beaming ─────────────────────────────────────────────
+    const rotationSign = sign(uniforms.diskRotationSpeed);
+    const velocityDir = vec3(
+      sin(hitAngle).negate().mul(rotationSign),
+      float(0.0),
+      cos(hitAngle).mul(rotationSign),
+    );
+    const velocityMagnitude = float(1.0).div(sqrt(hitR.div(innerR)));
+    const beta = velocityMagnitude.mul(0.3);
+    const cosTheta = dot(velocityDir, rayDir);
+    const dopplerFactor = float(1.0).div(float(1.0).sub(beta.mul(cosTheta)));
+    const dopplerBoost = pow(
+      dopplerFactor,
+      float(3.0).mul(uniforms.dopplerStrength),
+    );
+    diskColor.mulAssign(clamp(dopplerBoost, float(0.1), float(5.0)));
+
+    // Keplerian rotation: inner regions rotate faster
+    const keplerianPhase = time
+      .mul(uniforms.diskRotationSpeed)
+      .div(pow(hitR, float(1.5)));
+    const rotatedAngle = hitAngle.add(keplerianPhase);
+
+    // Anisotropic sampling: radial creates rings, azimuthal creates arcs
+    // const noiseCoord = vec3(
+    //   hitR.mul(uniforms.turbulenceScale), // Radial component
+    //   cos(rotatedAngle).div(uniforms.turbulenceStretch.max(0.1)), // Stretched azimuthally
+    //   sin(rotatedAngle).div(uniforms.turbulenceStretch.max(0.1)),
+    // );
+
+    const cycleLength = uniforms.turbulenceCycleTime;
+    const cyclicTime = time.mod(cycleLength);
+    const blendFactor = cyclicTime.div(cycleLength);
+
+    const phase1 = cyclicTime
+      .mul(uniforms.diskRotationSpeed)
+      .div(pow(hitR, float(1.5)));
+
+    const phase2 = cyclicTime
+      .add(cycleLength)
+      .mul(uniforms.diskRotationSpeed)
+      .div(pow(hitR, float(1.5)));
+
+    const noiseCoord1 = vec3(
+      hitR.mul(uniforms.turbulenceScale),
+      cos(hitAngle.add(phase1)).div(uniforms.turbulenceStretch.max(0.1)),
+      sin(hitAngle.add(phase1)).div(uniforms.turbulenceStretch.max(0.1)),
+    );
+
+    const noiseCoord2 = vec3(
+      hitR.mul(uniforms.turbulenceScale),
+      cos(hitAngle.add(phase2)).div(uniforms.turbulenceStretch.max(0.1)),
+      sin(hitAngle.add(phase2)).div(uniforms.turbulenceStretch.max(0.1)),
+    );
+
+    const turbulence1 = fbm(
+      noiseCoord1,
+      uniforms.turbulenceLacunarity,
+      uniforms.turbulencePersistence,
+    );
+
+    const turbulence2 = fbm(
+      noiseCoord2,
+      uniforms.turbulenceLacunarity,
+      uniforms.turbulencePersistence,
+    );
+
+    // crossfade — at blendFactor=0 we're fully on turbulence2
+    //             at blendFactor=1 we're fully on turbulence1
+    // the transition is so slow it's invisible
+    const turbulence = mix(turbulence2, turbulence1, blendFactor);
+
+    const ringOpacity = pow(
+      clamp(turbulence, float(0.0), float(1.0)),
+      uniforms.turbulenceSharpness,
+    );
+
+    return diskColor.mul(ringOpacity).mul(edgeFalloff);
+  },
+);
+
 // ─── Main ─────────────────────────────────────────────────────────────────────
 
 export function CreateBlackHole({
@@ -188,7 +346,7 @@ export function CreateBlackHole({
     turbulenceLacunarity: uniform(2.7), // frequency multiplier per FBM octave — higher = more fine detail
     turbulencePersistence: uniform(0.6), // amplitude multiplier per FBM octave — higher = rougher texture
     turbulenceSharpness: uniform(1.0), // pow() contrast — higher = sharper bright/dark edges, lower = soft fog
-    turbulenceCycleTime: uniform(100.0), // seconds before turbulence resets — longer = slower crossfade cycle
+    turbulenceCycleTime: uniform(10.0), // seconds before turbulence resets — longer = slower crossfade cycle
 
     diskEdgeSoftnessInner: uniform(0.03),
     diskEdgeSoftnessOuter: uniform(0.04),
@@ -235,14 +393,15 @@ export function CreateBlackHole({
     const prevPos = uniforms.camera_position.toVar("prevPos"); // ← fixed name
     const escaped = float(0.0).toVar("escaped");
     const captured = float(0.0).toVar("captured");
-    const color = vec3(0.0, 0.0, 0.0).toVar("color"); // ← moved here
+    const color = vec3(0.0, 0.0, 0.0).toVar("color");
+    const alpha = float(0.0).toVar("alpha");
 
     const rs = uniforms.blackHoleMass.mul(2.0);
     const innerR = uniforms.diskInnerRadius;
     const outerR = uniforms.diskOuterRadius;
 
     // ── Raymarching loop ────────────────────────────────────────────────────
-    Loop(100, () => {
+    Loop(144, () => {
       const r = length(rayPos);
 
       // fell into black hole?
@@ -283,83 +442,24 @@ export function CreateBlackHole({
         If(inDisk, () => {
           const hitAngle = atan(hitPos.z, hitPos.x);
 
-          // ── Edge softening ──────────────────────────────────────────────
-          const normR = clamp(
-            hitR.sub(innerR).div(outerR.sub(innerR)),
-            float(0.0),
-            float(1.0),
+          const diskColor = accretionDisk(
+            hitR,
+            hitAngle,
+            time,
+            rayDir,
+            innerR,
+            outerR,
+            uniforms,
           );
-          const edgeFalloff = smoothstep(
-            float(0.0),
-            uniforms.diskEdgeSoftnessInner,
-            normR,
-          ).mul(
-            smoothstep(
-              float(1.0),
-              float(1.0).sub(uniforms.diskEdgeSoftnessOuter),
-              normR,
-            ),
-          );
+          const remainingAlpha = float(1.0).sub(alpha);
+          color.addAssign(diskColor.xyz/* .mul(diskColor.w) */.mul(remainingAlpha));
+          alpha.addAssign(remainingAlpha/* .mul(diskColor.w) */);
+          // Early termination when fully opaque
+          If(alpha.greaterThan(0.99), () => {
+            Break();
+          });
 
-          // ── Blackbody temperature ───────────────────────────────────────
-          const peakTempK = uniforms.diskTemperature.mul(1000.0);
-          const tempK = peakTempK.mul(
-            pow(innerR.div(hitR), uniforms.temperatureFalloff),
-          );
-          const diskColor = blackbodyColor(tempK).toVar("diskColor"); // ← toVar so we can mutate
-
-          // ── Doppler beaming ─────────────────────────────────────────────
-          const rotationSign = sign(uniforms.diskRotationSpeed);
-          const velocityDir = vec3(
-            sin(hitAngle).negate().mul(rotationSign),
-            float(0.0),
-            cos(hitAngle).mul(rotationSign),
-          );
-          const velocityMagnitude = float(1.0).div(sqrt(hitR.div(innerR)));
-          const beta = velocityMagnitude.mul(0.3);
-          const cosTheta = dot(velocityDir, rayDir);
-          const dopplerFactor = float(1.0).div(
-            float(1.0).sub(beta.mul(cosTheta)),
-          );
-          const dopplerBoost = pow(
-            dopplerFactor,
-            float(3.0).mul(uniforms.dopplerStrength),
-          );
-          diskColor.mulAssign(clamp(dopplerBoost, float(0.1), float(5.0)));
-
-          // Keplerian rotation: inner regions rotate faster
-          const keplerianPhase = time
-            .mul(uniforms.diskRotationSpeed)
-            .div(pow(hitR, float(1.5)));
-          const rotatedAngle = hitAngle.add(keplerianPhase);
-
-          // Anisotropic sampling: radial creates rings, azimuthal creates arcs
-          const noiseCoord = vec3(
-            hitR.mul(uniforms.turbulenceScale), // Radial component
-            cos(rotatedAngle).div(uniforms.turbulenceStretch.max(0.1)), // Stretched azimuthally
-            sin(rotatedAngle).div(uniforms.turbulenceStretch.max(0.1)),
-          );
-
-          const turbulence = fbm(
-            noiseCoord,
-            uniforms.turbulenceLacunarity,
-            uniforms.turbulencePersistence,
-          );
-          const ringOpacity = pow(
-            clamp(turbulence, float(0.0), float(1.0)),
-            uniforms.turbulenceSharpness,
-          );
-
-          // only stop the ray if this disk hit is actually visible
-          // const isVisible = ringOpacity.mul(edgeFalloff).greaterThan(0.05);
-
-          // If(isVisible, () => {
-          //   color.assign(diskColor.mul(edgeFalloff).mul(ringOpacity));
-          //   escaped.assign(1.0);
-          //   Break();
-          // });
-
-          color.assign(diskColor.mul(edgeFalloff).mul(ringOpacity));
+          color.assign(diskColor);
           escaped.assign(1.0);
           Break();
         });
