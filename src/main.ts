@@ -1,8 +1,28 @@
 import "./style.css";
 import * as THREE from "three/webgpu";
-import { Fn, uniform, uv, vec4 } from "three/tsl";
+import {
+  abs,
+  float,
+  floor,
+  Fn,
+  fract,
+  max,
+  mix,
+  mod,
+  pow,
+  sin,
+  smoothstep,
+  step,
+  time,
+  uniform,
+  uv,
+  vec2,
+  vec3,
+  vec4,
+} from "three/tsl";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { ClosedCurve, PRESETS } from "./utils/curve";
+import Stats from "three/examples/jsm/libs/stats.module.js";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -19,35 +39,37 @@ interface SceneState {
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
-const CAMERA_FOV = 60;
+const CAMERA_FOV = 30;
 const CAMERA_NEAR = 0.1;
 const CAMERA_FAR = 1000;
 const CAMERA_LOOKAHEAD_OFFSET = 5 / 100;
-const SPEED = 0.03; // progress units per second
+const SPEED = 0.04; // progress units per second
 const RANGE = 5;
+const SECTIONS = 10;
 
 const CONFIG = {
-  RadialSegments: 32,
+  RadialSegments: 60,
   Radius: 2,
-  HeightSegments: 0, // ← computed, not hardcoded
+  HeightSegments: 5 * 5 * SECTIONS, // ← computed, not hardcoded
 };
+
+const stats = new Stats();
+document.body.appendChild(stats.dom);
 
 const curve = new ClosedCurve(
   PRESETS.helix.map((p) => p.clone().multiplyScalar(RANGE)),
 );
-
-// Get approximate curve length
 const curveLength = curve.toThreeCurve().getLength();
 
-// Calculate HeightSegments to make squares
-const arcPerSlice = (2 * Math.PI * CONFIG.Radius) / CONFIG.RadialSegments;
-const heightSegments = Math.round(curveLength / arcPerSlice);
-CONFIG.HeightSegments = heightSegments;
+// Step 2: compute radial segments so width = height
+// CONFIG.RadialSegments = Math.round(
+//   (2 * Math.PI * CONFIG.Radius * CONFIG.HeightSegments) / curveLength,
+// );
 
 const Uniforms = {
   uTime: uniform(0),
   uHeightSegment: uniform(CONFIG.HeightSegments),
-  uRadialSegments: uniform(48),
+  uRadialSegments: uniform(CONFIG.RadialSegments),
   uRadius: uniform(3),
 };
 
@@ -113,7 +135,7 @@ function updateCameraAlongCurve(
   const target = curve.getPoint(progressRef.value + CAMERA_LOOKAHEAD_OFFSET);
 
   // ✅ Frenet normal as up — prevents roll as curve twists
-  const { normal } = curve.getFrenetFrame(progressRef.value);
+  const { normal } = curve.getFrenetFrame(1 - progressRef.value);
 
   camera.position.copy(pos);
   camera.up.copy(normal); // ✅ must be set BEFORE lookAt
@@ -189,7 +211,42 @@ function createTube(scene: THREE.Scene): {
     side: THREE.DoubleSide,
     // wireframe: true,
   });
-  material.colorNode = Fn(() => vec4(uv(), 0, 1))();
+  material.colorNode = Fn(() => {
+    // Total Segments = Uniform.uHeightSegments;
+    // Number of sections = 5;
+    // Section Width = 5 segment * 1 = 5 segment
+
+    // Calculating the square segments
+    const Plane = fract(uv().y.mul(Uniforms.uHeightSegment).div(25));
+    const Section = fract(Plane.mul(25).div(5));
+    const Segment = fract(Section.mul(5));
+    const X = fract(uv().x.mul(Uniforms.uRadialSegments).div(2));
+    const NewUv = vec2(X, Segment);
+
+    // Creating The Box
+    const uvCentered = NewUv.sub(0.5);
+    const size = vec2(0.3, 0.2); // box half-size (smaller than full UV)
+
+    const d = max(abs(uvCentered).sub(size), 0.0).length();
+    const inside = step(d, 0.0);
+    const borderWidth = 0.02;
+    const alpha = smoothstep(0.0,float(1.5).sub(abs(sin(time.add(Plane.mul(20)))).mul(1.2)),uvCentered.length().div(pow(2,.5)))
+
+    const border = smoothstep(0.0, borderWidth, d).sub(
+      smoothstep(borderWidth, borderWidth * 2.0, d),
+    );
+    // const time = uniform(float(0)); // your uTime
+
+    const borderColor = vec3(1.0, 0.2, 0.1);
+    const insideColor = vec3(0.1, 0.2, 0.5).mul(alpha);
+    const bgColor = vec3(0.0);
+    const color = mix(bgColor, insideColor, inside).add(
+      borderColor.mul(border),
+    );
+
+    return vec4(color, 1);
+    // return vec4(vec3(alpha, 0, 0), 1);
+  })();
 
   const tube = new THREE.Mesh(geometry, material);
   scene.add(tube);
@@ -210,14 +267,19 @@ function onResize(state: SceneState): void {
 // ─── Animate ──────────────────────────────────────────────────────────────────
 
 function animate(state: SceneState): void {
-  const { renderer, scene, camera, curve, clock, progressRef } = state;
+  stats.begin();
+  const { renderer, scene, camera, curve, clock, progressRef, controls } =
+    state;
 
   const delta = clock.getDelta();
+
+  // controls.update(delta);
 
   // ✅ Single source of truth for progress — no double increment
   updateCameraAlongCurve(camera, curve, delta, progressRef);
 
   renderer.render(scene, camera);
+  stats.end();
   requestAnimationFrame(() => animate(state));
 }
 
@@ -233,6 +295,8 @@ async function init(): Promise<void> {
   );
   const { tube, curve } = createTube(scene);
   const clock = new THREE.Clock();
+
+  camera.position.set(0, 100, 100);
 
   const state: SceneState = {
     renderer,
