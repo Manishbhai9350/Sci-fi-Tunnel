@@ -7,10 +7,12 @@ import {
   floor,
   Fn,
   fract,
+  grayscale,
   If,
   max,
   mix,
   mod,
+  pass,
   pow,
   sin,
   smoothstep,
@@ -25,6 +27,8 @@ import {
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { ClosedCurve, PRESETS } from "./utils/curve";
 import Stats from "three/examples/jsm/libs/stats.module.js";
+import { Pane } from "tweakpane";
+import { gaussianBlur } from "three/examples/jsm/tsl/display/GaussianBlurNode.js";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -36,7 +40,7 @@ interface SceneState {
   tube: THREE.Mesh;
   curve: ClosedCurve;
   clock: THREE.Clock;
-  progressRef: { value: number }; // ← ref so mutation escapes animate()
+  progressRef: { value: number };
 }
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -376,7 +380,7 @@ function createTube(scene: THREE.Scene): {
     const insideColor = MulColor.mul(alpha);
 
     const color = mix(bgColor, insideColor, inside)
-      .mul(step(border, 0.3))
+      .mul(step(border, 0.34))
       .add(MulColor.mul(border));
 
     return vec4(color, 1);
@@ -393,32 +397,33 @@ function createTube(scene: THREE.Scene): {
 
 function onResize(state: SceneState): void {
   const { renderer, camera } = state;
-  camera.aspect = window.innerWidth / window.innerHeight;
+
+  const w = window.innerWidth;
+  const h = window.innerHeight;
+
+  camera.aspect = w / h;
   camera.updateProjectionMatrix();
-  renderer.setSize(window.innerWidth, window.innerHeight);
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+
+  renderer.setSize(w, h);
 }
 
 // ─── Animate ──────────────────────────────────────────────────────────────────
 
-function animate(state: SceneState): void {
+async function animate(state: SceneState): Promise<void> {
   stats.begin();
-  const { renderer, scene, camera, curve, clock, progressRef, controls } =
-    state;
+
+  const { camera, scene, curve, clock, progressRef, renderer } = state;
 
   const delta = clock.getDelta();
-  
-  // controls.update(delta);
-  
-  // ✅ Single source of truth for progress — no double increment
+
   updateCameraAlongCurve(camera, curve, delta, progressRef);
-  updateLightColors(delta)
+  updateLightColors(delta);
 
   renderer.render(scene, camera);
+
   stats.end();
   requestAnimationFrame(() => animate(state));
 }
-
 // ─── Init ─────────────────────────────────────────────────────────────────────
 
 async function init(): Promise<void> {
@@ -433,6 +438,30 @@ async function init(): Promise<void> {
   const clock = new THREE.Clock();
 
   camera.position.set(0, 100, 100);
+
+  const bloomParams = {
+    strength: 1.2,
+    radius: 0.4,
+    threshold: 0.85,
+  };
+  const renderPipeline = new THREE.RenderPipeline(renderer);
+  // ─── WebGPU PostProcessing ─────────────────────────────
+  // Post-processing
+  const scenePass = pass(scene, camera);
+  const output = scenePass.getTextureNode(); // default parameter is 'output'
+
+  renderPipeline.outputNode = grayscale(gaussianBlur(output, 10));
+
+  const pane = new Pane();
+
+  pane.addBinding(bloomParams, "strength", { min: 0, max: 3 });
+  // .on("change", (e) => (bloomPass.strength = e.value));
+
+  pane.addBinding(bloomParams, "radius", { min: 0, max: 1 });
+  // .on("change", (e) => (bloomPass.radius = e.value));
+
+  pane.addBinding(bloomParams, "threshold", { min: 0, max: 1 });
+  // .on("change", (e) => (bloomPass.threshold = e.value));
 
   const state: SceneState = {
     renderer,
