@@ -2,10 +2,12 @@ import "./style.css";
 import * as THREE from "three/webgpu";
 import {
   abs,
+  and,
   float,
   floor,
   Fn,
   fract,
+  If,
   max,
   mix,
   mod,
@@ -42,14 +44,14 @@ interface SceneState {
 const CAMERA_FOV = 30;
 const CAMERA_NEAR = 0.1;
 const CAMERA_FAR = 1000;
-const CAMERA_LOOKAHEAD_OFFSET = 5 / 100;
-const SPEED = 0.04; // progress units per second
+const CAMERA_LOOKAHEAD_OFFSET = 2 / 100;
+const SPEED = 0.03; // progress units per second
 const RANGE = 5;
 const SECTIONS = 10;
 
 const CONFIG = {
-  RadialSegments: 60,
-  Radius: 2,
+  RadialSegments: 100,
+  Radius: 0.8,
   HeightSegments: 5 * 5 * SECTIONS, // ← computed, not hardcoded
 };
 
@@ -59,7 +61,7 @@ document.body.appendChild(stats.dom);
 const curve = new ClosedCurve(
   PRESETS.helix.map((p) => p.clone().multiplyScalar(RANGE)),
 );
-const curveLength = curve.toThreeCurve().getLength();
+// const curveLength = curve.toThreeCurve().getLength();
 
 // Step 2: compute radial segments so width = height
 // CONFIG.RadialSegments = Math.round(
@@ -68,10 +70,40 @@ const curveLength = curve.toThreeCurve().getLength();
 
 const Uniforms = {
   uTime: uniform(0),
+  uRadius: uniform(CONFIG.Radius),
   uHeightSegment: uniform(CONFIG.HeightSegments),
   uRadialSegments: uniform(CONFIG.RadialSegments),
-  uRadius: uniform(3),
+  uOrange: uniform(vec3(1.0, 0.45, 0.0)),
+  uPink: uniform(vec3(1.0, 0.2, 0.6)),
+  uSkyBlue: uniform(vec3(0.25, 0.7, 1.0)),
+  uYellow: uniform(vec3(1.0, 0.9, 0.2)),
+  uPurple: uniform(vec3(0.6, 0.35, 1.0)),
 };
+
+const LightColors = [
+  new THREE.Color("#FFD84D"), // yellow
+  new THREE.Color("#FF6AD5"), // pink
+  new THREE.Color("#9B7BFF"), // purple
+  new THREE.Color("#59C3FF"), // skyblue
+  new THREE.Color("#FF8C42"), // orange
+  new THREE.Color("#4DFFB8"), // mint
+  new THREE.Color("#FF4D6D"), // coral
+  new THREE.Color("#6DFF4D"), // lime
+  new THREE.Color("#4DE1FF"), // cyan
+];
+
+const lightState = {
+  currentA: LightColors[0].clone(),
+  targetA: LightColors[1].clone(),
+  currentB: LightColors[2].clone(),
+  targetB: LightColors[3].clone(),
+  timer: 0,
+  duration: 3, // seconds between color changes
+};
+
+function getRandomColor() {
+  return LightColors[Math.floor(Math.random() * LightColors.length)].clone();
+}
 
 // ─── Renderer ─────────────────────────────────────────────────────────────────
 
@@ -90,20 +122,28 @@ async function createRenderer(): Promise<
 
 // ─── Scene ────────────────────────────────────────────────────────────────────
 
+let cameraPointLight: THREE.PointLight | null = null;
+let cameraPointLightFar: THREE.PointLight | null = null;
 function createScene(): THREE.Scene {
   const scene = new THREE.Scene();
   scene.background = new THREE.Color(0x000000);
 
-  const ambient = new THREE.AmbientLight(0xffffff, 0.2);
+  const ambient = new THREE.AmbientLight(0xffffff, 0);
   scene.add(ambient);
 
-  const key = new THREE.DirectionalLight(0xffffff, 2.0);
-  key.position.set(5, 5, 5);
-  scene.add(key);
+  cameraPointLight = new THREE.PointLight(0xffffff, 2);
+  scene.add(cameraPointLight);
 
-  const rim = new THREE.DirectionalLight(0x4488ff, 1.0);
-  rim.position.set(-5, -2, -5);
-  scene.add(rim);
+  cameraPointLightFar = new THREE.PointLight(0xffffff, 1.8);
+  scene.add(cameraPointLightFar);
+
+  // const key = new THREE.DirectionalLight(0xffffff, 2.0);
+  // key.position.set(5, 5, 5);
+  // scene.add(key);
+
+  // const rim = new THREE.DirectionalLight(0x4488ff, 1.0);
+  // rim.position.set(-5, -2, -5);
+  // scene.add(rim);
 
   return scene;
 }
@@ -120,26 +160,55 @@ function createCamera(): THREE.PerspectiveCamera {
   return camera;
 }
 
-// ─── Camera update ────────────────────────────────────────────────────────────
+function updateLightColors(delta: number) {
+  lightState.timer += delta;
+  const t = Math.min(lightState.timer / lightState.duration, 1);
 
+  // lerp colors
+  lightState.currentA.lerp(lightState.targetA, t);
+  lightState.currentB.lerp(lightState.targetB, t);
+
+  if (cameraPointLight) cameraPointLight.color.copy(lightState.currentA);
+  if (cameraPointLightFar) cameraPointLightFar.color.copy(lightState.currentB);
+
+  // pick new targets
+  if (t >= 1) {
+    lightState.timer = 0;
+    lightState.targetA = getRandomColor();
+    lightState.targetB = getRandomColor();
+  }
+}
+
+// ─── Camera update ────────────────────────────────────────────────────────────
 function updateCameraAlongCurve(
   camera: THREE.PerspectiveCamera,
   curve: ClosedCurve,
   delta: number,
   progressRef: { value: number },
 ): void {
-  // ✅ Mutate the ref — change persists across frames
   progressRef.value = (progressRef.value + delta * SPEED) % 1;
 
   const pos = curve.getPoint(progressRef.value);
   const target = curve.getPoint(progressRef.value + CAMERA_LOOKAHEAD_OFFSET);
 
-  // ✅ Frenet normal as up — prevents roll as curve twists
   const { normal } = curve.getFrenetFrame(1 - progressRef.value);
 
+  // 🎥 camera
   camera.position.copy(pos);
-  camera.up.copy(normal); // ✅ must be set BEFORE lookAt
+  camera.up.copy(normal);
   camera.lookAt(target);
+
+  // 💡 Light 1 (near camera)
+  if (cameraPointLight) {
+    const lightPos = curve.getPoint(progressRef.value + 0.024);
+    cameraPointLight.position.copy(lightPos);
+  }
+
+  // 💡 Light 2 (far ahead)
+  if (cameraPointLightFar) {
+    const farPos = curve.getPoint(progressRef.value + 0.035);
+    cameraPointLightFar.position.copy(farPos);
+  }
 }
 
 // ─── Controls ─────────────────────────────────────────────────────────────────
@@ -207,9 +276,8 @@ function createTube(scene: THREE.Scene): {
   pos.needsUpdate = true;
   geometry.computeVertexNormals();
 
-  const material = new THREE.MeshBasicNodeMaterial({
+  const material = new THREE.MeshPhysicalNodeMaterial({
     side: THREE.DoubleSide,
-    // wireframe: true,
   });
   material.colorNode = Fn(() => {
     // Total Segments = Uniform.uHeightSegments;
@@ -220,32 +288,99 @@ function createTube(scene: THREE.Scene): {
     const Plane = fract(uv().y.mul(Uniforms.uHeightSegment).div(25));
     const Section = fract(Plane.mul(25).div(5));
     const Segment = fract(Section.mul(5));
-    const X = fract(uv().x.mul(Uniforms.uRadialSegments).div(2));
+    const X = fract(
+      uv().x.mul(Uniforms.uRadialSegments).mul(CONFIG.Radius).div(6.2),
+    );
     const NewUv = vec2(X, Segment);
 
     // Creating The Box
     const uvCentered = NewUv.sub(0.5);
-    const size = vec2(0.3, 0.2); // box half-size (smaller than full UV)
+    const size = vec2(0.2, 0.2); // box half-size (smaller than full UV)
 
     const d = max(abs(uvCentered).sub(size), 0.0).length();
     const inside = step(d, 0.0);
     const borderWidth = 0.02;
-    const alpha = smoothstep(0.0,float(1.5).sub(abs(sin(time.add(Plane.mul(20)))).mul(1.2)),uvCentered.length().div(pow(2,.5)))
+    const alpha = smoothstep(
+      0.0,
+      float(1.5).sub(
+        abs(
+          sin(
+            time
+              .add(Plane.mul(20))
+              .add(
+                floor(X.mul(Uniforms.uRadialSegments)).div(
+                  Uniforms.uRadialSegments,
+                ),
+              ),
+          ),
+        ).mul(1.2),
+      ),
+      uvCentered.length().div(pow(2, 0.5)),
+    );
 
     const border = smoothstep(0.0, borderWidth, d).sub(
       smoothstep(borderWidth, borderWidth * 2.0, d),
     );
     // const time = uniform(float(0)); // your uTime
 
-    const borderColor = vec3(1.0, 0.2, 0.1);
-    const insideColor = vec3(0.1, 0.2, 0.5).mul(alpha);
-    const bgColor = vec3(0.0);
-    const color = mix(bgColor, insideColor, inside).add(
-      borderColor.mul(border),
+    const bgColor = vec3(0);
+
+    const MulColor = vec3(0, 0, 0);
+
+    If(
+      and(
+        Section.greaterThan(float(1 / 5).mul(4)),
+        Section.lessThanEqual(float(1 / 5).mul(5)),
+      ),
+      () => {
+        MulColor.assign(Uniforms.uOrange);
+      },
+    );
+    If(
+      and(
+        Section.greaterThan(float(1 / 5).mul(3)),
+        Section.lessThanEqual(float(1 / 5).mul(4)),
+      ),
+      () => {
+        MulColor.assign(Uniforms.uPink);
+      },
+    );
+    If(
+      and(
+        Section.greaterThan(float(1 / 5).mul(2)),
+        Section.lessThanEqual(float(1 / 5).mul(3)),
+      ),
+      () => {
+        MulColor.assign(Uniforms.uPurple);
+      },
+    );
+    If(
+      and(
+        Section.greaterThan(float(1 / 5).mul(1)),
+        Section.lessThanEqual(float(1 / 5).mul(2)),
+      ),
+      () => {
+        MulColor.assign(Uniforms.uSkyBlue);
+      },
+    );
+    If(
+      and(
+        Section.greaterThan(float(1 / 5).mul(0)),
+        Section.lessThanEqual(float(1 / 5).mul(1)),
+      ),
+      () => {
+        MulColor.assign(Uniforms.uYellow);
+      },
     );
 
+    const insideColor = MulColor.mul(alpha);
+
+    const color = mix(bgColor, insideColor, inside)
+      .mul(step(border, 0.3))
+      .add(MulColor.mul(border));
+
     return vec4(color, 1);
-    // return vec4(vec3(alpha, 0, 0), 1);
+    // return vec4(vec3(inside.add(border)), 1);
   })();
 
   const tube = new THREE.Mesh(geometry, material);
@@ -272,11 +407,12 @@ function animate(state: SceneState): void {
     state;
 
   const delta = clock.getDelta();
-
+  
   // controls.update(delta);
-
+  
   // ✅ Single source of truth for progress — no double increment
   updateCameraAlongCurve(camera, curve, delta, progressRef);
+  updateLightColors(delta)
 
   renderer.render(scene, camera);
   stats.end();
