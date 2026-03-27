@@ -17,18 +17,12 @@
 import * as THREE from "three/webgpu";
 import {
   Fn,
-  uniform,
-  float,
   vec3,
-  mix,
   floor,
   fract,
   mod,
-  int,
-  select,
-  Loop,
-  Break,
   texture,
+  float,
 } from "three/tsl";
 import type { ConstNode } from "three/webgpu";
 

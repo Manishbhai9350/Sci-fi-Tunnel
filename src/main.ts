@@ -2,17 +2,12 @@ import "./style.css";
 import * as THREE from "three/webgpu";
 import {
   abs,
-  and,
   float,
   floor,
   Fn,
   fract,
-  grayscale,
-  If,
-  lengthSq,
   max,
   mix,
-  mod,
   pass,
   pow,
   sin,
@@ -30,7 +25,6 @@ import { ClosedCurve, PRESETS } from "./utils/curve";
 import Stats from "three/examples/jsm/libs/stats.module.js";
 import { Pane } from "tweakpane";
 import { bloom } from "three/examples/jsm/tsl/display/BloomNode.js";
-import { motionBlur } from "three/examples/jsm/tsl/display/MotionBlur.js";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -121,18 +115,54 @@ function getRandomColor() {
 }
 
 // ─── Renderer ─────────────────────────────────────────────────────────────────
-
 async function createRenderer(): Promise<
   InstanceType<typeof THREE.WebGPURenderer>
 > {
   const canvas: HTMLCanvasElement = document.querySelector("main canvas")!;
-  const renderer = new THREE.WebGPURenderer({ canvas, antialias: true });
+  const renderer = new THREE.WebGPURenderer({
+    canvas,
+    antialias: true,
+    powerPreference: "high-performance",
+  });
+
   renderer.setSize(window.innerWidth, window.innerHeight);
+
+  // ⭐ Dynamic resolution base pixel ratio
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+
+  // ⭐ Proper color pipeline (BIG visual improvement)
+  renderer.outputColorSpace = THREE.SRGBColorSpace;
+
+  // ⭐ Physically correct lighting
+  // renderer.useLegacyLights = false;
+
+  // ⭐ Filmic tone mapping (you already use it, keep)
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
   renderer.toneMappingExposure = 1.0;
+
+  // ⭐ GPU power hint
+  // renderer.powerPreference = "high-performance";
+
   await renderer.init();
   return renderer;
+}
+
+// 🎯 Adaptive resolution scaler
+let dynamicScale = 1;
+let frameAvg = 60;
+function updateDynamicResolution(
+  renderer: InstanceType<typeof THREE.WebGPURenderer>,
+  delta: number,
+) {
+  const fps = 1 / delta;
+  frameAvg = frameAvg * 0.9 + fps * 0.1;
+
+  if (frameAvg < 50) dynamicScale -= 0.02;
+  if (frameAvg > 58) dynamicScale += 0.01;
+
+  dynamicScale = Math.min(Math.max(dynamicScale, 0.6), 1);
+
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2) * dynamicScale);
 }
 
 // ─── Scene ────────────────────────────────────────────────────────────────────
@@ -176,7 +206,7 @@ function createCamera(): THREE.PerspectiveCamera {
 }
 
 const lightColorTimers = Array(LIGHT_COUNT).fill(0);
-const lightColorTargets = Array.from({ length: LIGHT_COUNT }, (_, i) =>
+const lightColorTargets = Array.from({ length: LIGHT_COUNT }, () =>
   getRandomColor(),
 );
 
@@ -197,7 +227,7 @@ function updateLightColors(delta: number) {
   }
 }
 
-const BASE_LIGHT_OFFSET = 0.018;
+const BASE_LIGHT_OFFSET = 0.015;
 const INDEX_LIGHT_OFFSET = 0.007;
 // ─── Camera update ────────────────────────────────────────────────────────────
 function updateCameraAlongCurve(
@@ -308,6 +338,8 @@ function createTube(scene: THREE.Scene): {
     );
     const NewUv = vec2(X, Segment);
 
+    const tileMask = step(0.02, Segment).mul(step(Segment, 0.98));
+
     // Creating The Box
     const uvCentered = NewUv.sub(0.5);
     const size = vec2(0.2, 0.2); // box half-size (smaller than full UV)
@@ -342,63 +374,34 @@ function createTube(scene: THREE.Scene): {
 
     const MulColor = vec3(0, 0, 0);
 
-    If(
-      and(
-        Section.greaterThan(float(1 / 5).mul(4)),
-        Section.lessThanEqual(float(1 / 5).mul(5)),
-      ),
-      () => {
-        MulColor.assign(Uniforms.uOrange);
-      },
-    );
-    If(
-      and(
-        Section.greaterThan(float(1 / 5).mul(3)),
-        Section.lessThanEqual(float(1 / 5).mul(4)),
-      ),
-      () => {
-        MulColor.assign(Uniforms.uPink);
-      },
-    );
-    If(
-      and(
-        Section.greaterThan(float(1 / 5).mul(2)),
-        Section.lessThanEqual(float(1 / 5).mul(3)),
-      ),
-      () => {
-        MulColor.assign(Uniforms.uPurple);
-      },
-    );
-    If(
-      and(
-        Section.greaterThan(float(1 / 5).mul(1)),
-        Section.lessThanEqual(float(1 / 5).mul(2)),
-      ),
-      () => {
-        MulColor.assign(Uniforms.uSkyBlue);
-      },
-    );
-    If(
-      and(
-        Section.greaterThan(float(1 / 5).mul(0)),
-        Section.lessThanEqual(float(1 / 5).mul(1)),
-      ),
-      () => {
-        MulColor.assign(Uniforms.uYellow);
-      },
-    );
+    // 🎨 Branchless section palette
+    const idx = floor(Section.mul(5));
 
-    const insideColor = MulColor.mul(alpha);
+    let sectionColor = vec3(
+      Uniforms.uYellow.r,
+      Uniforms.uYellow.g,
+      Uniforms.uYellow.b,
+    );
+    sectionColor = mix(sectionColor, Uniforms.uSkyBlue, step(1.0, idx));
+    sectionColor = mix(sectionColor, Uniforms.uPurple, step(2.0, idx));
+    sectionColor = mix(sectionColor, Uniforms.uPink, step(3.0, idx));
+    sectionColor = mix(sectionColor, Uniforms.uOrange, step(4.0, idx));
 
-    const color = mix(bgColor, insideColor, inside)
-      .mul(step(border, 0.34))
-      .add(MulColor.mul(border));
+    MulColor.assign(sectionColor);
 
-    return vec4(color, 1);
-    // return vec4(vec3(inside.add(border)), 1);
+    // 💡 animated interior shading
+    const insideColor = MulColor.mul(alpha).mul(tileMask);
+
+    // 🧱 final composition
+    const finalColor = mix(bgColor, insideColor, inside)
+      .mul(step(border, 0.34)) // cut hole
+      .add(MulColor.mul(border)); // add border
+
+    return vec4(finalColor, 1);
   })();
 
   const tube = new THREE.Mesh(geometry, material);
+  tube.frustumCulled = false;
   scene.add(tube);
 
   return { tube, curve };
@@ -416,6 +419,7 @@ function onResize(state: SceneState): void {
   camera.updateProjectionMatrix();
 
   renderer.setSize(w, h);
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2) * dynamicScale);
 }
 
 let SpeedMode = false;
@@ -444,10 +448,10 @@ async function animate(state: SceneState): Promise<void> {
     stats.begin();
   }
 
-  const { camera, scene, curve, clock, progressRef, renderer, renderPipeline } =
-    state;
+  const { camera, curve, clock, progressRef, renderPipeline, renderer } = state;
 
   const delta = clock.getDelta();
+  updateDynamicResolution(renderer, delta);
 
   if (SpeedMode) {
     camera.fov += (SpeedModeFov - camera.fov) * 0.1;
