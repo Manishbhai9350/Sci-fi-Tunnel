@@ -9,6 +9,7 @@ import {
   fract,
   grayscale,
   If,
+  lengthSq,
   max,
   mix,
   mod,
@@ -28,8 +29,8 @@ import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { ClosedCurve, PRESETS } from "./utils/curve";
 import Stats from "three/examples/jsm/libs/stats.module.js";
 import { Pane } from "tweakpane";
-import { gaussianBlur } from "three/examples/jsm/tsl/display/GaussianBlurNode.js";
 import { bloom } from "three/examples/jsm/tsl/display/BloomNode.js";
+import { motionBlur } from "three/examples/jsm/tsl/display/MotionBlur.js";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -47,11 +48,16 @@ interface SceneState {
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
+const isDebug = window.location.hash.includes("debug");
+
+if (isDebug) {
+  console.log("Debug mode ON");
+}
 const CAMERA_FOV = 30;
 const CAMERA_NEAR = 0.1;
 const CAMERA_FAR = 1000;
 const CAMERA_LOOKAHEAD_OFFSET = 2 / 100;
-const INITIAL_SPEED = 0.04 / 100;
+const INITIAL_SPEED = 0.04;
 const RANGE = 5;
 const SECTIONS = 10;
 let SPEED = INITIAL_SPEED; // progress units per second
@@ -129,8 +135,9 @@ async function createRenderer(): Promise<
 
 // ─── Scene ────────────────────────────────────────────────────────────────────
 
-let cameraPointLight: THREE.PointLight | null = null;
-let cameraPointLightFar: THREE.PointLight | null = null;
+const LIGHT_COUNT = 10;
+let cameraLights: THREE.PointLight[] = [];
+
 function createScene(): THREE.Scene {
   const scene = new THREE.Scene();
   scene.background = new THREE.Color(0x000000);
@@ -138,19 +145,18 @@ function createScene(): THREE.Scene {
   const ambient = new THREE.AmbientLight(0xffffff, 0);
   scene.add(ambient);
 
-  cameraPointLight = new THREE.PointLight(0xffffff, 2);
-  scene.add(cameraPointLight);
+  cameraLights = [];
 
-  cameraPointLightFar = new THREE.PointLight(0xffffff, 1.8);
-  scene.add(cameraPointLightFar);
+  for (let i = 0; i < LIGHT_COUNT; i++) {
+    const light = new THREE.PointLight(
+      LightColors[i % LightColors.length],
+      0.35,
+      8,
+    );
 
-  // const key = new THREE.DirectionalLight(0xffffff, 2.0);
-  // key.position.set(5, 5, 5);
-  // scene.add(key);
-
-  // const rim = new THREE.DirectionalLight(0x4488ff, 1.0);
-  // rim.position.set(-5, -2, -5);
-  // scene.add(rim);
+    scene.add(light);
+    cameraLights.push(light);
+  }
 
   return scene;
 }
@@ -167,25 +173,30 @@ function createCamera(): THREE.PerspectiveCamera {
   return camera;
 }
 
+const lightColorTimers = Array(LIGHT_COUNT).fill(0);
+const lightColorTargets = Array.from({ length: LIGHT_COUNT }, (_, i) =>
+  getRandomColor(),
+);
+
 function updateLightColors(delta: number) {
-  lightState.timer += delta;
-  const t = Math.min(lightState.timer / lightState.duration, 1);
+  for (let i = 0; i < cameraLights.length; i++) {
+    const light = cameraLights[i];
 
-  // lerp colors
-  lightState.currentA.lerp(lightState.targetA, t);
-  lightState.currentB.lerp(lightState.targetB, t);
+    lightColorTimers[i] += delta;
+    const t = Math.min(lightColorTimers[i] / lightState.duration, 1);
 
-  if (cameraPointLight) cameraPointLight.color.copy(lightState.currentA);
-  if (cameraPointLightFar) cameraPointLightFar.color.copy(lightState.currentB);
+    // Lerp current → target
+    light.color.lerp(lightColorTargets[i], t);
 
-  // pick new targets
-  if (t >= 1) {
-    lightState.timer = 0;
-    lightState.targetA = getRandomColor();
-    lightState.targetB = getRandomColor();
+    if (t >= 1) {
+      lightColorTimers[i] = 0;
+      lightColorTargets[i] = getRandomColor();
+    }
   }
 }
 
+const BASE_LIGHT_OFFSET = 0.023;
+const INDEX_LIGHT_OFFSET = 0.007;
 // ─── Camera update ────────────────────────────────────────────────────────────
 function updateCameraAlongCurve(
   camera: THREE.PerspectiveCamera,
@@ -205,17 +216,13 @@ function updateCameraAlongCurve(
   camera.up.copy(normal);
   camera.lookAt(target);
 
-  // 💡 Light 1 (near camera)
-  if (cameraPointLight) {
-    const lightPos = curve.getPoint(progressRef.value + 0.024);
-    cameraPointLight.position.copy(lightPos);
-  }
+  cameraLights.forEach((light, i) => {
+    const offset =
+      progressRef.value + BASE_LIGHT_OFFSET + i * INDEX_LIGHT_OFFSET;
 
-  // 💡 Light 2 (far ahead)
-  if (cameraPointLightFar) {
-    const farPos = curve.getPoint(progressRef.value + 0.035);
-    cameraPointLightFar.position.copy(farPos);
-  }
+    const lightPos = curve.getPoint(offset);
+    light.position.copy(lightPos);
+  });
 }
 
 // ─── Controls ─────────────────────────────────────────────────────────────────
@@ -282,7 +289,7 @@ function createTube(scene: THREE.Scene): {
   pos.needsUpdate = true;
   geometry.computeVertexNormals();
 
-  const material = new THREE.MeshStandardNodeMaterial({
+  const material = new THREE.MeshPhysicalNodeMaterial({
     side: THREE.DoubleSide,
   });
   material.colorNode = Fn(() => {
@@ -411,13 +418,21 @@ function onResize(state: SceneState): void {
 
 let SpeedMode = false;
 let SpeedModeSpeed = SPEED * 2;
-let SpeedModeFov = CAMERA_FOV * 1.7;
+let SpeedModeFov = CAMERA_FOV * 1.4;
+let speedHint: HTMLDivElement | null =
+  document.querySelector(".speed-hint") || null;
+
+function PointerUp() {
+  SpeedMode = false;
+  document.body.style.cursor = "grab";
+}
 
 function PointerDown() {
   SpeedMode = true;
-}
-function PointerUp() {
-  SpeedMode = false;
+  if (speedHint) {
+    speedHint.style.opacity = "0";
+  }
+  document.body.style.cursor = "grabbing";
 }
 
 // ─── Animate ──────────────────────────────────────────────────────────────────
@@ -440,7 +455,7 @@ async function animate(state: SceneState): Promise<void> {
   camera.updateProjectionMatrix();
 
   updateCameraAlongCurve(camera, curve, delta, progressRef);
-  updateLightColors(delta);
+  updateLightColors(delta * 5);
 
   // renderer.render(scene, camera);
   renderPipeline.render();
@@ -464,48 +479,53 @@ async function init(): Promise<void> {
   camera.position.set(0, 100, 100);
 
   const bloomParams = {
-    strength: 2,
-    radius: 0.4,
-    threshold: 0,
+    strength: 7,
+    radius: 0.16,
+    threshold: 0.007,
   };
   const renderPipeline = new THREE.RenderPipeline(renderer);
   // ─── WebGPU PostProcessing ─────────────────────────────
   // Post-processing
   const scenePass = pass(scene, camera);
-  const output = scenePass.getTextureNode(); // default parameter is 'output'
+  const output = scenePass.getTextureNode("output"); // default parameter is 'output'
 
-  // create GPU uniforms
-  const bloomStrength = uniform(bloomParams.strength);
-  const bloomRadius = uniform(bloomParams.radius);
-  const bloomThreshold = uniform(bloomParams.threshold);
-
-  const bloomNode = bloom(output, bloomStrength, bloomRadius, bloomThreshold);
+  const bloomNode = bloom(
+    output,
+    bloomParams.strength,
+    bloomParams.radius,
+    bloomParams.threshold,
+  );
   // bloomNode.setSize(innerWidth,innerHeight)
 
   // renderPipeline.outputNode = grayscale(gaussianBlur(output, 20));
-  renderPipeline.outputNode = /* grayscale */ bloomNode;
+  // renderPipeline.outputNode = output.add(bloomNode);
+  renderPipeline.outputNode = output.add(bloomNode.mul(0.5));
 
   renderPipeline.needsUpdate = true;
 
   const pane = new Pane();
 
   pane
-    .addBinding(bloomParams, "strength", { min: 0, max: 3 })
-    .on("change", ({ value }) => {
-      bloomStrength.value = value;
+    .addBinding(bloomParams, "strength", { min: 0, max: 7 })
+    .on("change", () => {
+      bloomNode.strength.value = bloomParams.strength;
     });
 
   pane
     .addBinding(bloomParams, "radius", { min: 0, max: 1 })
-    .on("change", ({ value }) => {
-      bloomRadius.value = value;
+    .on("change", () => {
+      bloomNode.radius.value = bloomParams.radius;
     });
 
   pane
-    .addBinding(bloomParams, "threshold", { min: 0, max: 1 })
-    .on("change", ({ value }) => {
-      bloomThreshold.value = value;
+    .addBinding(bloomParams, "threshold", { min: 0, max: 0.2, step: 0.001 })
+    .on("change", () => {
+      bloomNode.threshold.value = bloomParams.threshold;
     });
+
+  if (!isDebug) {
+    pane.dispose();
+  }
 
   const state: SceneState = {
     renderer,
@@ -520,8 +540,8 @@ async function init(): Promise<void> {
   };
 
   window.addEventListener("resize", () => onResize(state));
-  // window.addEventListener("pointerdown", PointerDown);
-  // window.addEventListener("pointerup", PointerUp);
+  window.addEventListener("pointerdown", PointerDown);
+  window.addEventListener("pointerup", PointerUp);
 
   animate(state);
 }

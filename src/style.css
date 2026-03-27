@@ -1,4 +1,4 @@
-@import url("https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;700&display=swap");
+/* @import url("https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;700&display=swap"); */
 
 * {
   padding: 0;
@@ -10,6 +10,9 @@ html,
 body {
   width: 100vw;
   height: 100vh;
+}
+body {
+  cursor: grab;
 }
 
 main {
@@ -30,18 +33,20 @@ main {
 }
 
 .content h1 {
-  font-family: "Playfair Display", serif;
-  font-size: 52px;
-  font-weight: 700;
-  color: rgba(255, 255, 255, 0.678);
-  letter-spacing: 0.04em;
-  margin: 0;
+  color: white;
+  font-size: 18px;
+  letter-spacing: 3px;
+  font-family: Arial, Helvetica, sans-serif;
+  opacity: 0.85;
+  text-transform: uppercase;
 }
 
 .links {
+  width: 100%;
   display: flex;
-  gap: 24px;
   align-items: center;
+  justify-content: space-between;
+  gap: 24px;
   pointer-events: all;
 }
 
@@ -53,4 +58,99 @@ main {
 
 .links a:hover {
   color: white;
+}
+
+/* overlay container */
+.speed-hint {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  display: flex;
+  justify-content: center;
+  align-items: flex-end;
+  z-index: 10;
+  transition: opacity 0.4s ease;
+}
+
+.speed-hint.hidden {
+  opacity: 0;
+}
+
+/* svg size */
+.hint-svg {
+  width: 260px;
+  opacity: 0.9;
+}
+
+/* mouse outline */
+.mouse rect {
+  fill: none;
+  stroke: white;
+  stroke-width: 2.5;
+}
+
+/* wheel animation */
+.wheel {
+  fill: white;
+  animation: wheelMove 1.4s infinite;
+}
+
+@keyframes wheelMove {
+  0% {
+    transform: translateY(0);
+    opacity: 1;
+  }
+  70% {
+    transform: translateY(12px);
+    opacity: 0.2;
+  }
+  100% {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
+/* pulse ring */
+.pulse-ring {
+  display: none;
+  fill: none;
+  stroke: white;
+  stroke-width: 2;
+  opacity: 0.5;
+  animation: pulse 2s infinite;
+}
+
+@keyframes pulse {
+  0% {
+    r: 45;
+    opacity: 0.7;
+  }
+  70% {
+    r: 65;
+    opacity: 0;
+  }
+  100% {
+    r: 45;
+    opacity: 0;
+  }
+}
+
+/* text */
+.hint-text {
+  fill: white;
+  font-size: 18px;
+  letter-spacing: 3px;
+  font-family: Arial, Helvetica, sans-serif;
+  opacity: 0.85;
+  animation: textBlink 2s infinite;
+}
+
+@keyframes textBlink {
+  0%,
+  100% {
+    opacity: 0.5;
+  }
+  50% {
+    opacity: 1;
+  }
 }
