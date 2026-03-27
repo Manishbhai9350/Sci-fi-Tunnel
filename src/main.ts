@@ -29,11 +29,13 @@ import { ClosedCurve, PRESETS } from "./utils/curve";
 import Stats from "three/examples/jsm/libs/stats.module.js";
 import { Pane } from "tweakpane";
 import { gaussianBlur } from "three/examples/jsm/tsl/display/GaussianBlurNode.js";
+import { bloom } from "three/examples/jsm/tsl/display/BloomNode.js";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
 interface SceneState {
   renderer: InstanceType<typeof THREE.WebGPURenderer>;
+  renderPipeline: THREE.RenderPipeline;
   scene: THREE.Scene;
   camera: THREE.PerspectiveCamera;
   controls: OrbitControls;
@@ -49,9 +51,10 @@ const CAMERA_FOV = 30;
 const CAMERA_NEAR = 0.1;
 const CAMERA_FAR = 1000;
 const CAMERA_LOOKAHEAD_OFFSET = 2 / 100;
-const SPEED = 0.03; // progress units per second
+const INITIAL_SPEED = 0.04 / 100;
 const RANGE = 5;
 const SECTIONS = 10;
+let SPEED = INITIAL_SPEED; // progress units per second
 
 const CONFIG = {
   RadialSegments: 100,
@@ -251,7 +254,6 @@ function createTube(scene: THREE.Scene): {
   const frames = Array.from({ length: CONFIG.HeightSegments + 1 }, (_, i) =>
     curve.getFrenetFrame(i / CONFIG.HeightSegments),
   );
-
   // CylinderGeometry vertex layout (after rotation):
   // (SEGMENTS + 1) rings × (RADIAL_SEGMENTS + 1) verts per ring
   const vertsPerRing = CONFIG.RadialSegments + 1; // = 49
@@ -280,7 +282,7 @@ function createTube(scene: THREE.Scene): {
   pos.needsUpdate = true;
   geometry.computeVertexNormals();
 
-  const material = new THREE.MeshPhysicalNodeMaterial({
+  const material = new THREE.MeshStandardNodeMaterial({
     side: THREE.DoubleSide,
   });
   material.colorNode = Fn(() => {
@@ -407,19 +409,41 @@ function onResize(state: SceneState): void {
   renderer.setSize(w, h);
 }
 
+let SpeedMode = false;
+let SpeedModeSpeed = SPEED * 2;
+let SpeedModeFov = CAMERA_FOV * 1.7;
+
+function PointerDown() {
+  SpeedMode = true;
+}
+function PointerUp() {
+  SpeedMode = false;
+}
+
 // ─── Animate ──────────────────────────────────────────────────────────────────
 
 async function animate(state: SceneState): Promise<void> {
   stats.begin();
 
-  const { camera, scene, curve, clock, progressRef, renderer } = state;
+  const { camera, scene, curve, clock, progressRef, renderer, renderPipeline } =
+    state;
 
   const delta = clock.getDelta();
+
+  if (SpeedMode) {
+    camera.fov += (SpeedModeFov - camera.fov) * 0.1;
+    SPEED += (SpeedModeSpeed - SPEED) * 0.1;
+  } else {
+    camera.fov += (CAMERA_FOV - camera.fov) * 0.1;
+    SPEED += (INITIAL_SPEED - SPEED) * 0.1;
+  }
+  camera.updateProjectionMatrix();
 
   updateCameraAlongCurve(camera, curve, delta, progressRef);
   updateLightColors(delta);
 
-  renderer.render(scene, camera);
+  // renderer.render(scene, camera);
+  renderPipeline.render();
 
   stats.end();
   requestAnimationFrame(() => animate(state));
@@ -440,9 +464,9 @@ async function init(): Promise<void> {
   camera.position.set(0, 100, 100);
 
   const bloomParams = {
-    strength: 1.2,
+    strength: 2,
     radius: 0.4,
-    threshold: 0.85,
+    threshold: 0,
   };
   const renderPipeline = new THREE.RenderPipeline(renderer);
   // ─── WebGPU PostProcessing ─────────────────────────────
@@ -450,18 +474,38 @@ async function init(): Promise<void> {
   const scenePass = pass(scene, camera);
   const output = scenePass.getTextureNode(); // default parameter is 'output'
 
-  renderPipeline.outputNode = grayscale(gaussianBlur(output, 10));
+  // create GPU uniforms
+  const bloomStrength = uniform(bloomParams.strength);
+  const bloomRadius = uniform(bloomParams.radius);
+  const bloomThreshold = uniform(bloomParams.threshold);
+
+  const bloomNode = bloom(output, bloomStrength, bloomRadius, bloomThreshold);
+  // bloomNode.setSize(innerWidth,innerHeight)
+
+  // renderPipeline.outputNode = grayscale(gaussianBlur(output, 20));
+  renderPipeline.outputNode = /* grayscale */ bloomNode;
+
+  renderPipeline.needsUpdate = true;
 
   const pane = new Pane();
 
-  pane.addBinding(bloomParams, "strength", { min: 0, max: 3 });
-  // .on("change", (e) => (bloomPass.strength = e.value));
+  pane
+    .addBinding(bloomParams, "strength", { min: 0, max: 3 })
+    .on("change", ({ value }) => {
+      bloomStrength.value = value;
+    });
 
-  pane.addBinding(bloomParams, "radius", { min: 0, max: 1 });
-  // .on("change", (e) => (bloomPass.radius = e.value));
+  pane
+    .addBinding(bloomParams, "radius", { min: 0, max: 1 })
+    .on("change", ({ value }) => {
+      bloomRadius.value = value;
+    });
 
-  pane.addBinding(bloomParams, "threshold", { min: 0, max: 1 });
-  // .on("change", (e) => (bloomPass.threshold = e.value));
+  pane
+    .addBinding(bloomParams, "threshold", { min: 0, max: 1 })
+    .on("change", ({ value }) => {
+      bloomThreshold.value = value;
+    });
 
   const state: SceneState = {
     renderer,
@@ -471,10 +515,13 @@ async function init(): Promise<void> {
     tube,
     curve,
     clock,
+    renderPipeline,
     progressRef: { value: 0 }, // ✅ survives across frames
   };
 
   window.addEventListener("resize", () => onResize(state));
+  // window.addEventListener("pointerdown", PointerDown);
+  // window.addEventListener("pointerup", PointerUp);
 
   animate(state);
 }
