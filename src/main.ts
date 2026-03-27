@@ -197,7 +197,7 @@ function updateLightColors(delta: number) {
   }
 }
 
-const BASE_LIGHT_OFFSET = 0.023;
+const BASE_LIGHT_OFFSET = 0.018;
 const INDEX_LIGHT_OFFSET = 0.007;
 // ─── Camera update ────────────────────────────────────────────────────────────
 function updateCameraAlongCurve(
