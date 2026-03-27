@@ -69,7 +69,9 @@ const CONFIG = {
 };
 
 const stats = new Stats();
-document.body.appendChild(stats.dom);
+if (isDebug) {
+  document.body.appendChild(stats.dom);
+}
 
 const curve = new ClosedCurve(
   PRESETS.helix.map((p) => p.clone().multiplyScalar(RANGE)),
@@ -438,7 +440,9 @@ function PointerDown() {
 // ─── Animate ──────────────────────────────────────────────────────────────────
 
 async function animate(state: SceneState): Promise<void> {
-  stats.begin();
+  if (isDebug) {
+    stats.begin();
+  }
 
   const { camera, scene, curve, clock, progressRef, renderer, renderPipeline } =
     state;
@@ -459,8 +463,9 @@ async function animate(state: SceneState): Promise<void> {
 
   // renderer.render(scene, camera);
   renderPipeline.render();
-
-  stats.end();
+  if (isDebug) {
+    stats.end();
+  }
   requestAnimationFrame(() => animate(state));
 }
 // ─── Init ─────────────────────────────────────────────────────────────────────
@@ -479,7 +484,7 @@ async function init(): Promise<void> {
   camera.position.set(0, 100, 100);
 
   const bloomParams = {
-    strength: 7,
+    strength: 4.7,
     radius: 0.16,
     threshold: 0.007,
   };
